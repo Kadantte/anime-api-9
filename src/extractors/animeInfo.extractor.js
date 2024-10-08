@@ -11,7 +11,9 @@ async function extractAnimeInfo(id) {
   try {
     const [resp, characterData] = await Promise.all([
       axios.get(`https://${baseUrl}/${id}`),
-      axios.get(`https://${baseUrl}/ajax/character/list/${id.split("-").pop()}`)
+      axios.get(
+        `https://${baseUrl}/ajax/character/list/${id.split("-").pop()}`
+      ),
     ]);
 
     const $1 = cheerio.load(characterData.data.html);
@@ -19,13 +21,39 @@ async function extractAnimeInfo(id) {
     const data_id = id.split("-").pop();
 
     const titleElement = $("#ani_detail .film-name");
-    const posterElement = $("#ani_detail .film-poster img");
-    const element = $("#ani_detail .anisc-info > .item");
+    const showType = $("#ani_detail .prebreadcrumb ol li")
+      .eq(1)
+      .find("a")
+      .text()
+      .trim();
+    const posterElement = $("#ani_detail .film-poster");
+    const tvInfoElement = $("#ani_detail .film-stats");
+    const tvInfo = {};
+
+    tvInfoElement.find(".tick-item, span.item").each((_, element) => {
+      const text = $(element).text().trim();
+      if ($(element).hasClass("tick-quality")) {
+        tvInfo["quality"] = text;
+      } else if ($(element).hasClass("tick-sub")) {
+        tvInfo["sub"] = text;
+      } else if ($(element).hasClass("tick-dub")) {
+        tvInfo["dub"] = text;
+      } else if ($(element).hasClass("tick-pg")) {
+        tvInfo["rating"] = text;
+      } else if ($(element).is("span.item")) {
+        if (!tvInfo["showType"]) {
+          tvInfo["showType"] = text; // First span value for showType
+        } else if (!tvInfo["duration"]) {
+          tvInfo["duration"] = text; // Second span value for duration
+        }
+      }
+    });
+    const element = $("#ani_detail > .ani_detail-stage > .container > .anis-content > .anisc-info-wrap > .anisc-info > .item");
     const overviewElement = $("#ani_detail .film-description .text");
 
-    const title = titleElement.text();
+    const title = titleElement.text().trim();
     const japanese_title = titleElement.attr("data-jname");
-    const poster = posterElement.attr("src");
+    const poster = posterElement.find('img').attr("src");
 
     const animeInfo = {};
     element.each((_, el) => {
@@ -43,30 +71,45 @@ async function extractAnimeInfo(id) {
 
     const season_id = formatTitle(title, data_id);
     animeInfo["Overview"] = overviewElement.text().trim();
-    
-    const adultContent = $(".film-poster>.tick-rate", element).text().trim().includes("18+");
+    animeInfo["tvInfo"] = tvInfo;
+
+    let adultContent = false;
+    const tickRateText = $(".tick-rate", posterElement).text().trim();
+    if (tickRateText.includes("18+")) {
+      adultContent = true;
+    }
 
     const [recommended_data, related_data] = await Promise.all([
       extractRecommendedData($),
-      extractRelatedData($)
+      extractRelatedData($),
     ]);
 
-    const charactersVoiceActors = $1(".bac-list-wrap .bac-item").map((_, el) => {
-      const character = {
-        id: $1(el).find(".per-info.ltr .pi-avatar").attr("href")?.split("/")[2] || "",
-        poster: $1(el).find(".per-info.ltr .pi-avatar img").attr("data-src") || "",
-        name: $1(el).find(".per-info.ltr .pi-detail a").text(),
-        cast: $1(el).find(".per-info.ltr .pi-detail .pi-cast").text(),
-      };
+    const charactersVoiceActors = $1(".bac-list-wrap .bac-item")
+      .map((_, el) => {
+        const character = {
+          id:
+            $1(el)
+              .find(".per-info.ltr .pi-avatar")
+              .attr("href")
+              ?.split("/")[2] || "",
+          poster:
+            $1(el).find(".per-info.ltr .pi-avatar img").attr("data-src") || "",
+          name: $1(el).find(".per-info.ltr .pi-detail a").text(),
+          cast: $1(el).find(".per-info.ltr .pi-detail .pi-cast").text(),
+        };
 
-      const voiceActors = $1(el).find(".per-info.per-info-xx .pix-list .pi-avatar").map((_, actorEl) => ({
-        id: $1(actorEl).attr("href")?.split("/")[2] || "",
-        poster: $1(actorEl).find("img").attr("data-src") || "",
-        name: $1(actorEl).attr("title") || "",
-      })).get();
+        const voiceActors = $1(el)
+          .find(".per-info.per-info-xx .pix-list .pi-avatar")
+          .map((_, actorEl) => ({
+            id: $1(actorEl).attr("href")?.split("/")[2] || "",
+            poster: $1(actorEl).find("img").attr("data-src") || "",
+            name: $1(actorEl).attr("title") || "",
+          }))
+          .get();
 
-      return { character, voiceActors };
-    }).get();
+        return { character, voiceActors };
+      })
+      .get();
 
     return {
       adultContent,
@@ -75,6 +118,7 @@ async function extractAnimeInfo(id) {
       title,
       japanese_title,
       poster,
+      showType,
       animeInfo,
       charactersVoiceActors,
       recommended_data,
